@@ -87,52 +87,7 @@ A note on the code:
 // sleep time in usec, dramatically reduces CPU usage
 #define POLLING_USLEEP	1000
 
-typedef enum {
-  ButtonState_Off		= 0x00,
-  ButtonState_On		= 0x20,
-  ButtonState_Flashing		= 0x63,
-  ButtonState_Flash		= 0x41,
-  // values in between specify alternate flashing durations
-  ButtonState_FlashLong		= 0x5f
-} ButtonState;
-
-typedef enum {
-  ButtonLightSpec_Pad01	= 0x00,
-  ButtonLightSpec_Pad02,
-  ButtonLightSpec_Pad03,
-  ButtonLightSpec_Pad04,
-  ButtonLightSpec_Pad05,
-  ButtonLightSpec_Pad06,
-  ButtonLightSpec_Pad07,
-  ButtonLightSpec_Pad08,
-  ButtonLightSpec_Pad09,
-  ButtonLightSpec_Pad10,
-  ButtonLightSpec_Pad11,
-  ButtonLightSpec_Pad12,
-  ButtonLightSpec_Pad13,
-  ButtonLightSpec_Pad14,
-  ButtonLightSpec_Pad15,
-  ButtonLightSpec_Pad16,
-  ButtonLightSpec_Scene,
-  ButtonLightSpec_Message,
-  ButtonLightSpec_Setting,
-  ButtonLightSpec_NoteCC,
-  ButtonLightSpec_MidiCH,
-  ButtonLightSpec_SWType,
-  ButtonLightSpec_RelVal,
-  ButtonLightSpec_Vel,
-  ButtonLightSpec_Port,
-  ButtonLightSpec_FixedVel,
-  ButtonLightSpec_ProgChange,
-  ButtonLightSpec_X,
-  ButtonLightSpec_Y,
-  ButtonLightSpec_Knob1,
-  ButtonLightSpec_Knob2,
-  ButtonLightSpec_Pedal,
-  ButtonLightSpec_Roll,
-  ButtonLightSpec_Flam,
-  ButtonLightSpec_Hold
-} ButtonLightSpec;
+#include "padkontrol.h"
 
 #include <curl/curl.h>
 
@@ -154,7 +109,7 @@ void sysex_print(char *buf) {
   int i;
   printf("Sending SysEx message:");
   for(i=0;;i++) {
-    if(!(i%4)) printf("\n\t");
+    if(!(i%4)) printf("\n\t");  
     printf("%02hhx ", buf[i]);
     
     if(buf[i] == (char)0xf7) break;
@@ -531,17 +486,16 @@ void midi_process(PmDeviceID devi, PmDeviceID devo) {
   return;
 }
 
-int main(int c, char **v) {
-  int dev_count, i;
-  PmDeviceID devi, devo;
-  const PmDeviceInfo *in, *out;
-  
-  Pm_Initialize();
-  
-  if(c!=3) {
+void kontrol_printdevicelist(int argc, char** argv)
+{
+    int dev_count, i;
+    PmDeviceID devi, devo;
+    const PmDeviceInfo *in, *out;
+    
+    Pm_Initialize();
     dev_count = Pm_CountDevices();
 
-    printf("\nUsage: %s <input device id> <output device id>\n\n", v[0]);
+    printf("\nUsage: %s <input device id> <output device id>\n\n", argv[0]);
     printf("Listing %d devices:\n", dev_count);
     for(i=0;i<dev_count;i++) {
       devi = i;
@@ -554,12 +508,11 @@ int main(int c, char **v) {
         devi, in->input?"input ":"", in->output?"output":"", 
         in->name);
     }
-    
-    return 0;
-  }
-  
-  devi=atoi(v[1]);
-  devo=atoi(v[2]);
+}
+
+int pk_init(PadKontrol* pad, int devi, int devo) {
+  const PmDeviceInfo *in, *out;
+  Pm_Initialize();
   
   Pt_Start(1,0,0);
   
@@ -579,9 +532,16 @@ int main(int c, char **v) {
     return -1;
   }
   
-  midi_process(devi, devo);
   
-  Pm_Terminate();
-  
-  return 0;
 }
+
+void pk_process(PadKontrol* pad)
+{
+  midi_process(pad->devi, pad->devo);
+}
+
+void pk_deinit(PadKontrol* pad)
+{
+  Pm_Terminate();
+}
+
