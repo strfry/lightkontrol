@@ -1,5 +1,7 @@
 #pragma once
 
+#include <portmidi.h>
+
 typedef enum {
   ButtonState_Off		= 0x00,
   ButtonState_On		= 0x20,
@@ -48,23 +50,33 @@ typedef enum {
 } ButtonLightSpec;
 
 
-typedef struct {
+extern const char *FaceButtonStrings[];
+
+
+struct PadKontrol_s;
+typedef struct PadKontrol_s PadKontrol;
+
+struct PadKontrol_s {
     // public callbacks, must be set before calling pk_init()   
-    void (*padmsg)(void*, int pad, int on, int vel);
-    void (*facemsg)(void*, int button, int down);
-    void (*knobmsg)(void*, int knob, int value);
-    void (*encodermsg)(void*, int dec);
-    void (*xymsg)(void*, int x, int y);
+    void (*padmsg)(PadKontrol* pk, int pad, int on, int vel);
+    void (*facemsg)(PadKontrol* pk, int button, int down);
+    void (*knobmsg)(PadKontrol* pk, int knob, int value);
+    void (*encodermsg)(PadKontrol* pk, int dec);
+    void (*xymsg)(PadKontrol* pk, int x, int y);
     
+    void* callback_context;
     
     // private:
     int devi, devo;
+    PmStream *midi_in;
+    PmStream *midi_out;
 
-} PadKontrol;
+};
 
 int pk_init(PadKontrol* pad, int devi, int devo);
 void pk_process(PadKontrol* pad);
 void pk_deinit(PadKontrol* pad);
+void pk_printdevicelist(int argc, char** argv);
 
-void pk_setbuttonstate(ButtonLightSpec button, ButtonState state);
-void pk_setledmsg(char abc[3], char flash);
+void pk_buttonstate(PadKontrol* pad, ButtonLightSpec button, ButtonState state);
+void pk_ledmsg(PadKontrol* pad, char abc[3], char flash);
