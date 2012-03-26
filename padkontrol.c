@@ -89,21 +89,30 @@ A note on the code:
 
 #include "padkontrol.h"
 
-#include <curl/curl.h>
 
-void http_request(const char* req)
-{
-    CURL *curl;
-    CURLcode res;
-
-    curl = curl_easy_init();
-    if(curl) {
-        curl_easy_setopt(curl, CURLOPT_URL, req);
-        res = curl_easy_perform(curl);
-        /* always cleanup */ 
-        curl_easy_cleanup(curl);
-    }
-}
+const char *FaceButtonStrings[] = {
+  "Scene Button",
+  "Message Button",
+  "Setting Button",
+  "Note/CC Button",
+  "MIDI CH Button",
+  "SW Type Button",
+  "Rel. Val. Button",
+  "Velocity Button",
+  "Port Button",
+  "Fixed Velocity Button",
+  "Prog. Change Button",
+  "X Button",
+  "Y Button",
+  "Knob 1 Assign Button",
+  "Knob 2 Assign Button",
+  "Pedal Button",
+  "Roll Button",
+  "Flam Button",
+  "Hold Button",
+  "UNKNOWN BUTTON",
+  "XY Pad"
+};
 
 void sysex_print(char *buf) {
   int i;
@@ -119,7 +128,8 @@ void sysex_print(char *buf) {
   return;
 }
 
-int native_buttonstate(ButtonLightSpec button, ButtonState state, PmStream *midi) {
+void pk_buttonstate(PadKontrol* pad, ButtonLightSpec button, ButtonState state)
+{
   char buffer[] = {0xf0, 0x42, 0x40, 0x6e, 0x08, 0x01, 0x00, 0x00, 0xf7};
   
   buffer[6] = button;
@@ -129,12 +139,10 @@ int native_buttonstate(ButtonLightSpec button, ButtonState state, PmStream *midi
   sysex_print(buffer);
 #endif
 
-  Pm_WriteSysEx(midi, 0, buffer);
-  
-  return 0;
+  Pm_WriteSysEx(pad->midi_out, 0, buffer);
 }
 
-int native_ledmsg(char abc[3], char flash, PmStream *midi) {
+void pk_ledmsg(PadKontrol* pad, char abc[3], char flash) {
   char led[] = {
     0xf0, 0x42, 0x40, 0x6e, 
     0x08, 0x22, 0x04, 0x00, 
@@ -152,9 +160,7 @@ int native_ledmsg(char abc[3], char flash, PmStream *midi) {
   sysex_print(led);
 #endif
   
-  Pm_WriteSysEx(midi, 0, led);
-  
-  return 0;
+  Pm_WriteSysEx(pad->midi_out, 0, led);
 }
 
 // note: msg must be pre-allocated
@@ -204,157 +210,6 @@ void print_datadumpmsg(char *msg) {
   return;
 }
 
-void omlumlum_set_color(uint8_t r, uint8_t g, uint8_t b) {
-    const int size = 8192;
-    char req[8192] = "http://mpd/artnet.php?data[]=0&data[]=0&";
-
-    char colors[128]; 
-    snprintf(colors, 128, "data[]=%d&data[]=%d&data[]=%d&", r, g, b);
-
-    int i, j;
-    for (i = 0; i < 5; i++) {
-        strncat(req, "data[]=0&", size);
-        for (j = 0; j < 5; j++) {
-	    strncat(req, colors, size);
-	}
-    }
-
-    http_request(req);
-}
-
-void print_padmsg(char *msg, PmStream *midi) {
-  int 
-    pad	= msg[1] & 0x3f,
-    on	= msg[1] & 0x40,
-    vel	= msg[2];
-
-  
-  if(on) native_buttonstate(pad, pad<8?ButtonState_Flash:ButtonState_FlashLong, midi);
-
-  if (on) {
-  #define min(X, Y)  ((X) < (Y) ? (X) : (Y))
- #define max(X, Y)  ((X) < (Y) ? (Y) : (X))
-    static int r, g, b;
-    if (pad == 0) {
-      r = 0; g = 0; b = 0;
-    } else if (pad == 4) {
-      r = 255; g = 255; b = 255;
-    }
-
-    if (pad == 1) r = max(0, r - vel);
-    if (pad == 2) g = max(0, g - vel); 
-    if (pad == 3) b = max(0, b - vel); 
-    if (pad == 5) r = min(255, r + vel);
-    if (pad == 6) g = min(255, g + vel); 
-    if (pad == 7) b = min(255, b + vel); 
-
-if (pad == 8) system("ssh miau@mpd");
-     
-    omlumlum_set_color(r, g, b);
-  }  
-  
-  printf("Pad #%02hhd is %s, velocity %03hhd\n", pad +1, on?"down":"up", vel);
-  
-  return;
-}
-
-const char *FaceButtonStrings[] = {
-  "Scene Button",
-  "Message Button",
-  "Setting Button",
-  "Note/CC Button",
-  "MIDI CH Button",
-  "SW Type Button",
-  "Rel. Val. Button",
-  "Velocity Button",
-  "Port Button",
-  "Fixed Velocity Button",
-  "Prog. Change Button",
-  "X Button",
-  "Y Button",
-  "Knob 1 Assign Button",
-  "Knob 2 Assign Button",
-  "Pedal Button",
-  "Roll Button",
-  "Flam Button",
-  "Hold Button",
-  "UNKNOWN BUTTON",
-  "XY Pad"
-};
-
-void print_facemsg(char *msg, int *lights, PmStream *midi) {
-  const char *string;
-  int 
-    button  = msg[1],
-    down    = msg[2];
-
-  if(button <= 0x12) {
-    string = FaceButtonStrings[msg[1]];
-    if(down) {
-      // tip: button # in transmission + 0x10 = ButtonLightSpec
-      if(lights[button]) {
-        lights[button] = 0;
-        native_buttonstate(button +0x10, ButtonState_Off, midi);
-      } else {
-        lights[button] = 1;
-        native_buttonstate(button +0x10, ButtonState_Flashing, midi);
-      }
-    }
-  } else if(msg[1] == 0x20) {
-    // 0x20 is the XY pad up/down state
-    string = FaceButtonStrings[0x14];
-  } else {
-    // nothing else is specified
-    string = FaceButtonStrings[0x13];
-  }
-  
-  printf("%s (%02hhx) is %s\n", string, msg[1], down?"down":"up");
-  
-  return;
-}
-
-void print_knobmsg(char *msg, PmStream *midi) {
-  int
-    knob  = msg[1],
-    value = msg[2];
-  
-  native_ledmsg(knob?"K-2":"K-1", 0, midi);
-  printf("Knob %hhd value: %03hhd\n", knob +1, value);
-  
-  return;
-}
-
-void print_encodermsg(char *msg, PmStream *midi) {
-  int dec=msg[2]>>1; // note: 0x01=inc, 0x7f=dec. rshift converts these to false, true
-  
-  struct mpd_connection* conn = mpd_connection_new("mpd.lan", 6600, 0);
-
-  struct mpd_status* status = mpd_run_status(conn);
-
-  int volume = mpd_status_get_volume(status);
-  if (volume > 0 && volume < 100) {
-    volume += dec ? -1 : 1;
-    mpd_run_set_volume(conn, volume);
-
-    char buf[4];
-    snprintf(buf, 4, "%d", volume);
-    native_ledmsg(buf, 0, midi);
-  }
-
-  mpd_status_free(status);
-  mpd_connection_free(conn);
-}
-
-void print_xymsg(char *msg, PmStream *midi) {
-  int
-    x = msg[1],
-    y = msg[2];
-
-  native_ledmsg("pad", 1, midi);
-  printf("X: %03hhd Y: %03hhd\n", x, y);
-  
-  return;
-}
 
 void print_unknownmsg(char *msg) {
   printf("Unknown command: 0x%02hhx(0x%02hhx, 0x%02hhx)\n", msg[0], msg[1], msg[2]);
@@ -373,7 +228,7 @@ enum {
   NativeMessage_XY	= 0x4b
 } NativeMessage;
 
-void poll_native(PmStream *midi_in, PmStream *midi_out) {
+void poll_native(PadKontrol* pad) {
   char msg[3];
   PmError c;
   int lights[0x13];
@@ -381,7 +236,7 @@ void poll_native(PmStream *midi_in, PmStream *midi_out) {
   memset(&lights, 0, sizeof(lights));
   
   for(;;) {
-    c=read_native(midi_in, msg);
+    c=read_native(pad->midi_in, msg);
     
     if(!c) {
       usleep(POLLING_USLEEP);
@@ -399,20 +254,21 @@ void poll_native(PmStream *midi_in, PmStream *midi_out) {
         break;
         
       case NativeMessage_Pad:
-        print_padmsg(msg, midi_out);
+        pad->padmsg(pad, msg[1] & 0x3f, msg[1] & 0x40, msg[2]);
         break;
         
       case NativeMessage_Face:
-        print_facemsg(msg, lights, midi_out);
+        pad->facemsg(pad, msg[1], msg[2]);
         break;
       case NativeMessage_Knob:
-        print_knobmsg(msg, midi_out);
+        pad->knobmsg(pad, msg[1], msg[2]);
         break;
       case NativeMessage_Encoder:
-        print_encodermsg(msg, midi_out);
+        // note: 0x01=inc, 0x7f=dec. rshift converts these to false, true
+        pad->encodermsg(pad, msg[2]>>1);
         break;
       case NativeMessage_XY:
-        print_xymsg(msg, midi_out);
+        pad->xymsg(pad, msg[1], msg[2]);
         break;
       default:
         print_unknownmsg(msg);
@@ -474,19 +330,22 @@ void start_native(PmStream *out) {
   return;
 }
 
-void midi_process(PmDeviceID devi, PmDeviceID devo) {
-  PmStream *midi_in, *midi_out;
+
+
+void pk_process(PadKontrol* pad) {  
+  if (pad->midi_in == 0) {
+    Pm_OpenInput(&pad->midi_in, pad->devi, NULL, 512, NULL, NULL);
+  }
+  if (pad->midi_out == 0) {
+    Pm_OpenOutput(&pad->midi_out, pad->devo, NULL, 512, NULL, NULL, 0);
+    start_native(pad->midi_out);
+  }  
   
-  Pm_OpenInput(&midi_in, devi, NULL, 512, NULL, NULL);
-  Pm_OpenOutput(&midi_out, devo, NULL, 512, NULL, NULL, 0);
-  
-  start_native(midi_out);
-  
-  poll_native(midi_in, midi_out);
+  poll_native(pad);
   return;
 }
 
-void kontrol_printdevicelist(int argc, char** argv)
+void pk_printdevicelist(int argc, char** argv)
 {
     int dev_count, i;
     PmDeviceID devi, devo;
@@ -514,6 +373,12 @@ int pk_init(PadKontrol* pad, int devi, int devo) {
   const PmDeviceInfo *in, *out;
   Pm_Initialize();
   
+  pad->midi_in = 0;
+  pad->midi_out = 0;
+  
+  pad->devi= devi;
+  pad->devo = devo;
+  
   Pt_Start(1,0,0);
   
   in=Pm_GetDeviceInfo(devi);
@@ -533,11 +398,6 @@ int pk_init(PadKontrol* pad, int devi, int devo) {
   }
   
   
-}
-
-void pk_process(PadKontrol* pad)
-{
-  midi_process(pad->devi, pad->devo);
 }
 
 void pk_deinit(PadKontrol* pad)
